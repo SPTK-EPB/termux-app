@@ -448,8 +448,7 @@ public final class TermuxPropertyConstants {
         KEY_TERMINAL_ONCLICK_URL_OPEN,
         KEY_USE_CTRL_SPACE_WORKAROUND,
         KEY_USE_FULLSCREEN,
-        KEY_USE_FULLSCREEN_WORKAROUND,
-        TermuxConstants.PROP_ALLOW_EXTERNAL_APPS
+        KEY_USE_FULLSCREEN_WORKAROUND
     ));
 
     /** Defines the set for keys loaded by termux that have default boolean behaviour with true as default.
@@ -459,7 +458,8 @@ public final class TermuxPropertyConstants {
      */
     public static final Set<String> TERMUX_DEFAULT_TRUE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST = new HashSet<>(Arrays.asList(
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
-        KEY_RUN_TERMUX_AM_SOCKET_SERVER
+        KEY_RUN_TERMUX_AM_SOCKET_SERVER,
+        TermuxConstants.PROP_ALLOW_EXTERNAL_APPS
     ));
 
     /** Defines the set for keys loaded by termux that have default inverted boolean behaviour with false as default.
