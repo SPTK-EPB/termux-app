@@ -221,8 +221,8 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
-                    // Unity auto-provisioning: if DPC wrote a config file, fetch and run the bootstrap script
-                    runUnityProvisioning();
+                    // Unity auto-provisioning: if DPC set application restrictions, fetch and run the bootstrap script
+                    runUnityProvisioning(activity);
 
                     activity.runOnUiThread(whenDone);
 
@@ -375,38 +375,36 @@ final class TermuxInstaller {
     }
 
     /**
-     * Unity auto-provisioning: reads the config file written by the DPC and fetches
-     * the bootstrap script from the server. The script is executed in the background
-     * using the freshly-bootstrapped Termux bash.
+     * Unity auto-provisioning: reads DPC-provided config via Application Restrictions
+     * and fetches the bootstrap script from the server. The script is executed in the
+     * background using the freshly-bootstrapped Termux bash.
      *
-     * Config file location: /sdcard/Android/data/com.termux/unity-config.json
-     * Expected format: {"deviceId":"...","deviceSecret":"...","baseUrl":"https://..."}
+     * The DPC (Device Owner) sets restrictions via DevicePolicyManager.setApplicationRestrictions().
+     * Termux reads them via RestrictionsManager — no filesystem access needed, works on all
+     * Android versions including 11+ with scoped storage.
+     *
+     * Expected restriction keys: deviceId, deviceSecret, baseUrl
      */
-    private static void runUnityProvisioning() {
+    private static void runUnityProvisioning(android.content.Context context) {
         try {
-            File configFile = new File(Environment.getExternalStorageDirectory(),
-                "Android/data/com.termux/unity-config.json");
-            if (!configFile.exists()) {
-                Logger.logInfo(LOG_TAG, "No Unity config file found — skipping auto-provisioning.");
+            android.content.RestrictionsManager rm = (android.content.RestrictionsManager)
+                context.getSystemService(android.content.Context.RESTRICTIONS_SERVICE);
+            android.os.Bundle restrictions = rm != null ? rm.getApplicationRestrictions() : null;
+            if (restrictions == null || restrictions.isEmpty()) {
+                Logger.logInfo(LOG_TAG, "No Unity application restrictions — skipping auto-provisioning.");
                 return;
             }
 
-            // Read the config file
-            byte[] configBytes = new byte[(int) configFile.length()];
-            try (java.io.FileInputStream fis = new java.io.FileInputStream(configFile)) {
-                fis.read(configBytes);
-            }
-            String configJson = new String(configBytes, java.nio.charset.StandardCharsets.UTF_8);
-
-            // Parse JSON manually (no JSON library dependency in this module)
-            String deviceId = extractJsonValue(configJson, "deviceId");
-            String deviceSecret = extractJsonValue(configJson, "deviceSecret");
-            String baseUrl = extractJsonValue(configJson, "baseUrl");
+            String deviceId = restrictions.getString("deviceId");
+            String deviceSecret = restrictions.getString("deviceSecret");
+            String baseUrl = restrictions.getString("baseUrl");
 
             if (deviceId == null || deviceSecret == null || baseUrl == null) {
-                Logger.logError(LOG_TAG, "Unity config file missing required fields.");
+                Logger.logError(LOG_TAG, "Unity application restrictions missing required fields (deviceId/deviceSecret/baseUrl).");
                 return;
             }
+
+            Logger.logInfo(LOG_TAG, "Unity config received via Application Restrictions. Starting provisioning...");
 
             // Build the provisioning URL
             String url = baseUrl + "/api/provisioning/termux/bootstrap?deviceId="
@@ -432,20 +430,6 @@ final class TermuxInstaller {
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Unity auto-provisioning failed: " + e.getMessage());
         }
-    }
-
-    /**
-     * Extract a string value from a simple JSON object (no nesting, no arrays).
-     * Returns null if the key is not found.
-     */
-    private static String extractJsonValue(String json, String key) {
-        String pattern = "\"" + key + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start == -1) return null;
-        start += pattern.length();
-        int end = json.indexOf("\"", start);
-        if (end == -1) return null;
-        return json.substring(start, end);
     }
 
     private static Error ensureDirectoryExists(File directory) {

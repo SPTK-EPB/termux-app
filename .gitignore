@@ -38,3 +38,6 @@ local.properties
 ehthumbs.db
 Thumbs.db
 unity-termux.keystore
+unity-termux-v2.keystore
+unity-termux-v3.keystore
+.wrangler/
