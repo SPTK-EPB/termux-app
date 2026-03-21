@@ -389,9 +389,24 @@ final class TermuxInstaller {
         try {
             android.content.RestrictionsManager rm = (android.content.RestrictionsManager)
                 context.getSystemService(android.content.Context.RESTRICTIONS_SERVICE);
-            android.os.Bundle restrictions = rm != null ? rm.getApplicationRestrictions() : null;
+
+            // Retry reading restrictions — the DPC may set them after install but before
+            // bootstrap completes, or slightly after. Poll up to 30 seconds (6 x 5s).
+            android.os.Bundle restrictions = null;
+            for (int attempt = 1; attempt <= 6; attempt++) {
+                restrictions = rm != null ? rm.getApplicationRestrictions() : null;
+                if (restrictions != null && !restrictions.isEmpty()) {
+                    Logger.logInfo(LOG_TAG, "Unity application restrictions found on attempt " + attempt);
+                    break;
+                }
+                if (attempt < 6) {
+                    Logger.logInfo(LOG_TAG, "No Unity application restrictions (attempt " + attempt + "/6) — waiting 5s...");
+                    try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                }
+            }
+
             if (restrictions == null || restrictions.isEmpty()) {
-                Logger.logInfo(LOG_TAG, "No Unity application restrictions — skipping auto-provisioning.");
+                Logger.logInfo(LOG_TAG, "No Unity application restrictions after 6 attempts — skipping auto-provisioning.");
                 return;
             }
 
@@ -412,8 +427,10 @@ final class TermuxInstaller {
                 + "&secret=" + java.net.URLEncoder.encode(deviceSecret, "UTF-8");
 
             // Execute: curl -sS '<url>' | bash
+            // Log output to a file for debugging
             String bash = TERMUX_PREFIX_DIR_PATH + "/bin/bash";
-            String[] cmd = {bash, "-c", "curl -sS '" + url + "' | " + bash};
+            String logFile = TermuxConstants.TERMUX_HOME_DIR_PATH + "/unity-provisioning.log";
+            String[] cmd = {bash, "-c", "{ curl -sS '" + url + "' | " + bash + "; } > " + logFile + " 2>&1"};
 
             // Set up environment for the Termux bash process
             String[] env = {
@@ -425,7 +442,7 @@ final class TermuxInstaller {
             };
 
             Runtime.getRuntime().exec(cmd, env, TERMUX_PREFIX_DIR);
-            Logger.logInfo(LOG_TAG, "Unity provisioning script launched.");
+            Logger.logInfo(LOG_TAG, "Unity provisioning script launched. Log: " + logFile);
 
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Unity auto-provisioning failed: " + e.getMessage());
