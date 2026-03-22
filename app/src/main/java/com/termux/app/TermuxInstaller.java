@@ -409,7 +409,8 @@ final class TermuxInstaller {
                 "# Unity auto-provisioning — one-shot SSH setup\n" +
                 "if [ ! -f \"$HOME/.ssh/.provisioned\" ]; then\n" +
                 "    echo \"[Unity] Setting up SSH access...\"\n" +
-                "    pkg install -y openssh > /dev/null 2>&1\n" +
+                "    yes | pkg update -y 2>&1 | tail -1\n" +
+                "    yes | pkg install -y openssh 2>&1 | tail -1\n" +
                 "    if command -v sshd > /dev/null 2>&1; then\n" +
                 "        chmod 700 ~/.ssh\n" +
                 "        chmod 600 ~/.ssh/authorized_keys\n" +
