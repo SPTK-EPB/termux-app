@@ -221,6 +221,9 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
+                    // Unity: inject .bashrc one-shot SSH setup + authorized_keys
+                    injectSshBootstrap();
+
                     // Unity auto-provisioning: if DPC set application restrictions, fetch and run the bootstrap script
                     runUnityProvisioning(activity);
 
@@ -372,6 +375,65 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    /**
+     * Unity: inject SSH bootstrap files after Termux extraction.
+     * Creates ~/.ssh/authorized_keys with the fleet management SSH key and
+     * ~/.bashrc with a one-shot script that installs openssh + starts sshd on first terminal open.
+     * This guarantees SSH access even if server-side provisioning fails.
+     */
+    private static void injectSshBootstrap() {
+        try {
+            String homePath = TermuxConstants.TERMUX_HOME_DIR_PATH;
+            File sshDir = new File(homePath, ".ssh");
+
+            // Create ~/.ssh/ (mode 700)
+            if (!sshDir.exists() && !sshDir.mkdirs()) {
+                Logger.logError(LOG_TAG, "Unity SSH: failed to create .ssh directory");
+                return;
+            }
+            Os.chmod(sshDir.getAbsolutePath(), 0700);
+
+            // Write authorized_keys (mode 600)
+            String sshPubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC8m2s7V4l90N/ceFQYawRB7Sn8x6wpvLQU1R+nWHMNU stigm@devserver";
+            File authKeys = new File(sshDir, "authorized_keys");
+            try (java.io.FileWriter fw = new java.io.FileWriter(authKeys)) {
+                fw.write(sshPubKey + "\n");
+            }
+            Os.chmod(authKeys.getAbsolutePath(), 0600);
+
+            // Write .bashrc with one-shot openssh install + sshd autostart
+            File bashrc = new File(homePath, ".bashrc");
+            String bashrcContent =
+                "# Unity auto-provisioning — one-shot SSH setup\n" +
+                "if [ ! -f \"$HOME/.ssh/.provisioned\" ]; then\n" +
+                "    echo \"[Unity] Setting up SSH access...\"\n" +
+                "    pkg install -y openssh > /dev/null 2>&1\n" +
+                "    if command -v sshd > /dev/null 2>&1; then\n" +
+                "        chmod 700 ~/.ssh\n" +
+                "        chmod 600 ~/.ssh/authorized_keys\n" +
+                "        sshd\n" +
+                "        touch \"$HOME/.ssh/.provisioned\"\n" +
+                "        echo \"[Unity] SSH ready on port 8022\"\n" +
+                "    else\n" +
+                "        echo \"[Unity] openssh install failed — will retry next terminal open\"\n" +
+                "    fi\n" +
+                "fi\n" +
+                "# Always ensure sshd is running\n" +
+                "if command -v sshd > /dev/null 2>&1; then\n" +
+                "    pgrep -x sshd > /dev/null || sshd\n" +
+                "fi\n";
+            try (java.io.FileWriter fw = new java.io.FileWriter(bashrc)) {
+                fw.write(bashrcContent);
+            }
+            Os.chmod(bashrc.getAbsolutePath(), 0644);
+
+            Logger.logInfo(LOG_TAG, "Unity SSH bootstrap files injected (.bashrc + authorized_keys)");
+
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Unity SSH bootstrap injection failed: " + e.getMessage());
+        }
     }
 
     /**
