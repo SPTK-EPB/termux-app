@@ -378,10 +378,14 @@ final class TermuxInstaller {
     }
 
     /**
-     * Unity: inject SSH bootstrap files after Termux extraction.
-     * Creates ~/.ssh/authorized_keys with the fleet management SSH key and
-     * ~/.bashrc with a one-shot script that installs openssh + starts sshd on first terminal open.
-     * This guarantees SSH access even if server-side provisioning fails.
+     * Unity: inject SSH bootstrap files after Termux extraction and install openssh directly.
+     *
+     * 1. Writes ~/.ssh/authorized_keys with the fleet management SSH key
+     * 2. Writes ~/.bashrc with a sshd-restart safety net (ensures sshd on every terminal open)
+     * 3. Runs openssh install + sshd start directly via Runtime.exec() — no terminal tap needed
+     *
+     * The Runtime.exec() call is the primary path. The .bashrc safety net handles edge cases
+     * where sshd dies or the device reboots and Termux is opened manually.
      */
     private static void injectSshBootstrap() {
         try {
@@ -403,25 +407,10 @@ final class TermuxInstaller {
             }
             Os.chmod(authKeys.getAbsolutePath(), 0600);
 
-            // Write .bashrc with one-shot openssh install + sshd autostart
+            // Write .bashrc — safety net only (restart sshd if not running)
             File bashrc = new File(homePath, ".bashrc");
             String bashrcContent =
-                "# Unity auto-provisioning — one-shot SSH setup\n" +
-                "if [ ! -f \"$HOME/.ssh/.provisioned\" ]; then\n" +
-                "    echo \"[Unity] Setting up SSH access...\"\n" +
-                "    yes | pkg update -y 2>&1 | tail -1\n" +
-                "    yes | pkg install -y openssh 2>&1 | tail -1\n" +
-                "    if command -v sshd > /dev/null 2>&1; then\n" +
-                "        chmod 700 ~/.ssh\n" +
-                "        chmod 600 ~/.ssh/authorized_keys\n" +
-                "        sshd\n" +
-                "        touch \"$HOME/.ssh/.provisioned\"\n" +
-                "        echo \"[Unity] SSH ready on port 8022\"\n" +
-                "    else\n" +
-                "        echo \"[Unity] openssh install failed — will retry next terminal open\"\n" +
-                "    fi\n" +
-                "fi\n" +
-                "# Always ensure sshd is running\n" +
+                "# Unity — ensure sshd is running on every terminal open\n" +
                 "if command -v sshd > /dev/null 2>&1; then\n" +
                 "    pgrep -x sshd > /dev/null || sshd\n" +
                 "fi\n";
@@ -431,6 +420,51 @@ final class TermuxInstaller {
             Os.chmod(bashrc.getAbsolutePath(), 0644);
 
             Logger.logInfo(LOG_TAG, "Unity SSH bootstrap files injected (.bashrc + authorized_keys)");
+
+            // Install openssh and start sshd directly — no terminal interaction needed.
+            // This runs in the background; logs to ~/unity-ssh-setup.log for debugging.
+            // Waits up to 120s for any concurrent apt lock (runUnityProvisioning may race us).
+            // If openssh was already installed by the server-side script, just starts sshd.
+            String bash = TERMUX_PREFIX_DIR_PATH + "/bin/bash";
+            String logFile = homePath + "/unity-ssh-setup.log";
+            String script =
+                "{"
+                + " echo '[unity-ssh] Starting SSH setup...';"
+                // Wait for apt lock (server-side provisioning may run concurrently).
+                // fuser isn't in base Termux, so check the lock file with lsof or just
+                // wait for sshd to appear (the server-side script installs it too).
+                + " for i in $(seq 1 30); do"
+                + "   if command -v sshd > /dev/null 2>&1; then"
+                + "     echo '[unity-ssh] openssh already installed (by server-side script)';"
+                + "     break;"
+                + "   fi;"
+                // Try apt — if lock is held, it fails fast and we retry
+                + "   if yes | pkg install -y openssh > /dev/null 2>&1; then"
+                + "     echo '[unity-ssh] openssh installed successfully';"
+                + "     break;"
+                + "   fi;"
+                + "   echo \"[unity-ssh] apt busy or failed, retrying ($i/30)...\";"
+                + "   sleep 5;"
+                + " done;"
+                + " if command -v sshd > /dev/null 2>&1; then"
+                + "   chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys;"
+                + "   pgrep -x sshd > /dev/null || sshd;"
+                + "   touch ~/.ssh/.provisioned;"
+                + "   echo '[unity-ssh] SSH ready on port 8022';"
+                + " else"
+                + "   echo '[unity-ssh] openssh install failed after 30 attempts';"
+                + " fi;"
+                + "} > " + logFile + " 2>&1";
+            String[] cmd = {bash, "-c", script};
+            String[] env = {
+                "HOME=" + homePath,
+                "PREFIX=" + TERMUX_PREFIX_DIR_PATH,
+                "TMPDIR=" + TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH,
+                "PATH=" + TERMUX_PREFIX_DIR_PATH + "/bin",
+                "LANG=en_US.UTF-8",
+            };
+            Runtime.getRuntime().exec(cmd, env, new File(TERMUX_PREFIX_DIR_PATH));
+            Logger.logInfo(LOG_TAG, "Unity SSH setup launched via Runtime.exec(). Log: " + logFile);
 
         } catch (Exception e) {
             Logger.logError(LOG_TAG, "Unity SSH bootstrap injection failed: " + e.getMessage());
