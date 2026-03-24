@@ -439,7 +439,7 @@ final class TermuxInstaller {
                 + "     break;"
                 + "   fi;"
                 // Try apt — if lock is held, it fails fast and we retry
-                + "   if yes | pkg install -y openssh > /dev/null 2>&1; then"
+                + "   if pkg install -y openssh > /dev/null 2>&1; then"
                 + "     echo '[unity-ssh] openssh installed successfully';"
                 + "     break;"
                 + "   fi;"
