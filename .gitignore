@@ -43,3 +43,5 @@ unity-termux-v3.keystore
 unity-termux-v4.keystore
 *.idsig
 .wrangler/
+.keystore-password
+unity-termux-v5.keystore

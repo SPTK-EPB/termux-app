@@ -155,6 +155,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private boolean mIsVisible;
 
     /**
+     * Set when onServiceConnected fires before onStart (Android 11 race condition).
+     * Bootstrap is deferred until onStart sets mIsVisible = true.
+     */
+    private boolean mPendingBootstrap;
+
+    /**
      * If onResume() was called after onCreate().
      */
     private boolean mIsOnResumeAfterOnCreate = false;
@@ -289,6 +295,20 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         mIsVisible = true;
 
+        // Handle deferred bootstrap from onServiceConnected race (Android 11).
+        if (mPendingBootstrap && mTermuxService != null && mTermuxService.isTermuxSessionsEmpty()) {
+            mPendingBootstrap = false;
+            Logger.logDebug(LOG_TAG, "onStart: running deferred bootstrap");
+            TermuxInstaller.setupBootstrapIfNeeded(TermuxActivity.this, () -> {
+                if (mTermuxService == null) return;
+                try {
+                    mTermuxTerminalSessionActivityClient.addNewSession(false, null);
+                } catch (WindowManager.BadTokenException e) {
+                    // Activity finished - ignore.
+                }
+            });
+        }
+
         if (mTermuxTerminalSessionActivityClient != null)
             mTermuxTerminalSessionActivityClient.onStart();
 
@@ -409,8 +429,10 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
                     }
                 });
             } else {
-                // The service connected while not in foreground - just bail out.
-                finishActivityIfNotFinishing();
+                // The service connected before onStart() set mIsVisible (Android 11 race).
+                // Defer bootstrap until onStart() instead of bailing out.
+                Logger.logDebug(LOG_TAG, "onServiceConnected: deferring bootstrap until onStart");
+                mPendingBootstrap = true;
             }
         } else {
             // If termux was started from launcher "New session" shortcut and activity is recreated,
