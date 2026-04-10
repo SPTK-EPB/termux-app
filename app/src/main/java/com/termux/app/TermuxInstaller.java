@@ -120,6 +120,7 @@ final class TermuxInstaller {
             public void run() {
                 try {
                     Logger.logInfo(LOG_TAG, "Installing " + TermuxConstants.TERMUX_APP_NAME + " bootstrap packages.");
+                    long bootstrapStartTime = System.currentTimeMillis();
 
                     Error error;
 
@@ -226,6 +227,23 @@ final class TermuxInstaller {
 
                     // Unity auto-provisioning: if DPC set application restrictions, fetch and run the bootstrap script
                     runUnityProvisioning(activity);
+
+                    // Signal DPC that bootstrap is complete (bash + base packages available).
+                    // Enables sharing pipeline to advance to profiling immediately instead
+                    // of waiting the full 300s bootstrap window.
+                    try {
+                        long bootstrapDurationMs = System.currentTimeMillis() - bootstrapStartTime;
+                        android.content.Intent signal = new android.content.Intent(
+                            "work.unityoperator.unityapp.ACTION_TERMUX_BOOTSTRAP_COMPLETE");
+                        signal.setPackage("work.unityoperator.unityapp");
+                        signal.putExtra("bootstrapDurationMs", bootstrapDurationMs);
+                        activity.sendBroadcast(signal);
+                        Logger.logInfo(LOG_TAG, "Bootstrap completion broadcast sent to DPC (" + bootstrapDurationMs + "ms)");
+                    } catch (Exception signalEx) {
+                        // Non-fatal — DPC may not be installed or may be an older version.
+                        // The 300s fallback window handles this case.
+                        Logger.logWarn(LOG_TAG, "Failed to send bootstrap completion broadcast: " + signalEx.getMessage());
+                    }
 
                     activity.runOnUiThread(whenDone);
 
