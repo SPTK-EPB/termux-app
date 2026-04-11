@@ -476,6 +476,10 @@ final class TermuxInstaller {
             String script =
                 "{"
                 + " echo '[unity-ssh] Starting SSH setup...';"
+                // Re-assert apt hold — the Java-side holdAptVersions() ran before us,
+                // but if it failed silently or the provisioning script races us,
+                // this ensures the hold is in place before any pkg operation.
+                + " apt-mark hold apt gpgv libgcrypt libgpg-error 2>/dev/null || true;"
                 // Wait for apt lock (server-side provisioning may run concurrently).
                 // fuser isn't in base Termux, so check the lock file with lsof or just
                 // wait for sshd to appear (the server-side script installs it too).
