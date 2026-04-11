@@ -222,6 +222,12 @@ final class TermuxInstaller {
                     // Recreate env file since termux prefix was wiped earlier
                     TermuxShellEnvironment.writeEnvironmentToFile(activity);
 
+                    // Unity: hold apt/gpgv at bootstrap versions to prevent keyring breakage.
+                    // The bootstrap's apt can read its own keyring, but upgraded apt 2.8.1+
+                    // with gpgv 2.5.17 (libgcrypt 1.11.2) reports "unsupported filetype" on
+                    // the same keyring files. Holding prevents the breaking upgrade.
+                    holdAptVersions();
+
                     // Unity: inject .bashrc one-shot SSH setup + authorized_keys
                     injectSshBootstrap();
 
@@ -393,6 +399,28 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    /**
+     * Unity: hold apt and gpgv at their bootstrap versions to prevent keyring breakage.
+     *
+     * The bootstrap ships apt + gpgv + keyring files that are self-consistent.
+     * When pkg install upgrades apt to 2.8.1+ with gpgv 2.5.17 (libgcrypt 1.11.2),
+     * the new versions report "unsupported filetype" on the same keyring files,
+     * breaking all subsequent pkg operations. Holding prevents this upgrade.
+     */
+    private static void holdAptVersions() {
+        try {
+            String holdCmd = TERMUX_PREFIX_DIR_PATH + "/bin/apt-mark hold apt gpgv libgcrypt libgpg-error 2>/dev/null";
+            Process holdProcess = Runtime.getRuntime().exec(
+                new String[]{TERMUX_PREFIX_DIR_PATH + "/bin/sh", "-c", holdCmd});
+            int exitCode = holdProcess.waitFor();
+            Logger.logInfo(LOG_TAG, "apt-mark hold completed (exit " + exitCode + ")");
+        } catch (Exception e) {
+            // Non-fatal — if hold fails, the --allow-unauthenticated fallback in
+            // termux-bootstrap-v2.sh and sharing-provision.sh will handle it.
+            Logger.logWarn(LOG_TAG, "apt-mark hold failed: " + e.getMessage());
+        }
     }
 
     /**
