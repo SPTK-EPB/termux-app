@@ -4,10 +4,17 @@
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
-# Block git add of secret files
+# Block git add of secret files. Templates (.env.example / .env.sample /
+# .env.template) are explicitly allowed — they document the schema without
+# exposing real secrets.
 if echo "$COMMAND" | grep -qE 'git add.*(secrets-|\.env|copilot_homelab|\.pem|credentials)'; then
-  echo "Blocked: cannot stage secret files (secrets-*, .env*, .pem, credentials). Use .gitignore." >&2
-  exit 2
+  # Strip known-safe template suffixes, then re-check. If the only matches
+  # were templates, the stripped command is clean and we allow.
+  STRIPPED=$(echo "$COMMAND" | sed -E 's/\.env\.(example|sample|template)//g')
+  if echo "$STRIPPED" | grep -qE 'git add.*(secrets-|\.env|copilot_homelab|\.pem|credentials)'; then
+    echo "Blocked: cannot stage secret files (secrets-*, .env*, .pem, credentials). Use .gitignore. Templates (.env.example / .env.sample / .env.template) are allowed." >&2
+    exit 2
+  fi
 fi
 
 # Block force push
