@@ -34,19 +34,31 @@ fi
 # Pattern matches `--force` followed by non-hyphen-or-EOL (so --force-with-lease
 # is NOT blocked) OR ` -f` followed by space/EOL (combined short flags like -fv
 # are intentionally not matched per issue #259 scope).
-if echo "$COMMAND" | grep -qE 'git push.*(--force([^-]|$)|[[:space:]]-f([[:space:]]|$))'; then
+#
+# The span between `git push` and the force flag is `[^;&|]*` (NOT `.*`, cc#334):
+# `.*` is greedy across the WHOLE line, so an unrelated `-f` in a chained segment
+# (`git push -u origin b && rm -f /tmp/x`, or `grep -f`, `cp -f`, `tar -f`, `ln -f`)
+# tripped the block. `[^;&|]*` cannot cross a command separator, so the force flag
+# must belong to THIS `git push` invocation. A real force-push in a LATER segment
+# still blocks because grep re-anchors on the second `git push`.
+if echo "$COMMAND" | grep -qE 'git push[^;&|]*(--force([^-]|$)|[[:space:]]-f([[:space:]]|$))'; then
   echo "Blocked: force push (--force / -f) not allowed. Use --force-with-lease for rebase-and-push on feature branches." >&2
   exit 2
 fi
 
 # Block refspec force-push to main/master regardless of form.
 # Matches `+main`, `+master`, `+<src>:main`, `+<src>:master`, `+refs/heads/main`, etc.
-if echo "$COMMAND" | grep -qE 'git push.*\+([^[:space:]]*:)?(refs/heads/)?(main|master)([[:space:]]|$|:)'; then
+# Same `[^;&|]*` command-segment scoping as the force-flag check above (cc#334) so a
+# stray `+main` in an unrelated chained segment doesn't false-fire.
+if echo "$COMMAND" | grep -qE 'git push[^;&|]*\+([^[:space:]]*:)?(refs/heads/)?(main|master)([[:space:]]|$|:)'; then
   echo "Blocked: refspec force-push to main/master not allowed." >&2
   exit 2
 fi
 
-# Block dangerous rm targets
+# Block dangerous rm targets. The `\$HOME` is a LITERAL regex token matching the
+# string `$HOME` in a command (e.g. `rm -rf $HOME`), not a shell expansion — the
+# single quotes are correct here, so SC2016 is a false positive.
+# shellcheck disable=SC2016
 if echo "$COMMAND" | grep -qE 'rm\s+-rf\s+(/|~|\$HOME)'; then
   echo "Blocked: dangerous rm -rf target." >&2
   exit 2
