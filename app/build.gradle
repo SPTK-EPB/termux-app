@@ -29,7 +29,11 @@ android {
         implementation "androidx.preference:preference:1.2.1"
         implementation "androidx.viewpager:viewpager:1.0.0"
         implementation "com.google.android.material:material:1.12.0"
-        implementation "com.google.guava:guava:24.1-jre"
+        // Bumped from 24.1-jre (2018) to close CVE-2018-10237 (DoS), CVE-2020-8908
+        // (temp-dir), and the Guava info-disclosure advisory. App-only bump: the
+        // :app debugRuntimeClasspath (the shipped APK) resolves guava to this version.
+        // termux-shared/ is left at upstream's 24.1-jre (rebase-protected module).
+        implementation "com.google.guava:guava:33.3.1-jre"
         implementation "io.noties.markwon:core:$markwonVersion"
         implementation "io.noties.markwon:ext-strikethrough:$markwonVersion"
         implementation "io.noties.markwon:linkify:$markwonVersion"
