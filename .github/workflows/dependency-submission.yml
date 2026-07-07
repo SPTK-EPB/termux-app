@@ -21,3 +21,11 @@ jobs:
         java-version: 17
     - name: Generate and submit dependency graph
       uses: gradle/actions/dependency-submission@v6
+      with:
+        # Scope the submitted graph to the SHIPPED release runtime classpath only.
+        # Without this filter the action submits the entire build + plugin classpath
+        # (Android Gradle Plugin / R8 / bundletool / apksigner transitives: netty,
+        # grpc, protobuf, bouncycastle, jose4j, jdom2, ...), none of which ship in the
+        # APK. Those generated ~45 non-actionable Dependabot alerts (and kept growing
+        # with AGP's transitive churn). This scopes alerts to the real attack surface.
+        dependency-graph-include-configurations: '^releaseRuntimeClasspath$'
