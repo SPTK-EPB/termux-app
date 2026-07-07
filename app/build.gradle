@@ -46,7 +46,7 @@ android {
             // patched version — closes the XmlStreamReader DoS (fixed in 2.14.0) and the
             // path-traversal / input-validation advisory (fixed in 2.7). termux-shared/
             // source stays at upstream's 2.5 (fork policy).
-            implementation("commons-io:commons-io:2.16.1")
+            implementation("commons-io:commons-io:2.14.0")
         }
 
         implementation project(":terminal-view")
