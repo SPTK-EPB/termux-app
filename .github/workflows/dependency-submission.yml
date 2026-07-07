@@ -21,3 +21,21 @@ jobs:
         java-version: 17
     - name: Generate and submit dependency graph
       uses: gradle/actions/dependency-submission@v6
+      with:
+        # Scope the submitted graph to the SHIPPED runtime classpath only.
+        # This fork distributes the DEBUG APK (both debug_build.yml and
+        # attach_debug_apks_to_release.yml run `./gradlew assembleDebug`), so the
+        # shipped dependency set is `debugRuntimeClasspath`, NOT release.
+        #
+        # Without this filter the action also submits the buildscript/plugin classpath
+        # (Android Gradle Plugin 8.13.2 and its transitives: netty, grpc, protobuf,
+        # bouncycastle, jose4j, jdom2, ...), none of which ship in the APK. Those
+        # generated ~45 non-actionable Dependabot alerts (and kept growing with AGP's
+        # transitive churn). Scoping to the shipped runtime classpath drops them.
+        #
+        # NOTE: this is a fail-closed include filter — if it ever matches zero configs
+        # (e.g. a product flavor is added, changing the config name), the submitted
+        # graph goes EMPTY and Dependabot is blinded. After changing this, verify the
+        # submitted snapshot contains the shipped deps (guava, androidx, material,
+        # markwon) and drops the AGP transitives.
+        dependency-graph-include-configurations: '^debugRuntimeClasspath$'
