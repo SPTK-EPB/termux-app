@@ -6,6 +6,12 @@
 # is the CANONICAL source. scaffold-new-repo.sh pulls it into new repos, and
 # propagate-fleet-hook.sh --hook validate-bash.sh re-syncs existing repos from it.
 # Edit HERE, not per-repo.
+#
+# LC_ALL=C pins [:alnum:]/[:space:] to ASCII so the regex bounds are locale-independent
+# across the fleet (cc#416 panel, kimi-F6a). FAIL-OPEN property: if jq is ABSENT the hook
+# allows (empty COMMAND → no match → exit 0) — acceptable for a best-effort tripwire, noted
+# so it is a KNOWN property on a fleet-wide surface, not a surprise (kimi-F6c).
+export LC_ALL=C
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 
@@ -19,12 +25,53 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 # a whitespace-preceded `git add secrets-prod.txt`, or config/secrets-prod.txt still is (cc#327).
 # NOTE: the whitespace alternative is load-bearing — a bare `^` cannot match after the
 # unavoidable `git add ` prefix, so `(^|/)` alone would miss a root-level `secrets-foo.txt`.
-if echo "$COMMAND" | grep -qE 'git add.*((^|[/[:space:]])secrets-|\.env|copilot_homelab|\.pem|credentials)'; then
-  # Strip known-safe template suffixes, then re-check. If the only matches
-  # were templates, the stripped command is clean and we allow.
-  STRIPPED=$(echo "$COMMAND" | sed -E 's/\.env\.(example|sample|template)//g')
-  if echo "$STRIPPED" | grep -qE 'git add.*((^|[/[:space:]])secrets-|\.env|copilot_homelab|\.pem|credentials)'; then
-    echo "Blocked: cannot stage secret files (secrets-*, .env*, .pem, credentials). Use .gitignore. Templates (.env.example / .env.sample / .env.template) are allowed." >&2
+#
+# The `\.env` alternative is bounded by `(rc|s)?([^[:alnum:]]|$)` (ADM #1666, #1667): a real
+# env file has `.env` — optionally `.envrc` (direnv) or `.envs` (cookiecutter-django) —
+# followed by end-of-token, a dot (`.env.local`), whitespace, a quote, `-`/`_`; never any
+# OTHER alphanumeric. Unbounded `\.env` false-blocked filenames merely CONTAINING the
+# substring (`sentryScrub.envelope.test.ts`, `foo.environment.ts`); an over-tight
+# `\.env([^[:alnum:]]|$)` (no `(rc|s)?`) re-ALLOWED the secret-bearing `.envrc`/`.envs`
+# conventions — the #1667 cross-family panel caught that loosening. The bound still blocks
+# `.env`, `.env.local`, `secrets.env`, quoted `"foo.env"`, `.env-`/`.env_`, `.envrc`,
+# `.envs/…`; still allows `.envelope`/`.environment`.
+#
+# The `\.pem` and `credentials` alternatives are bounded the SAME way (cc#416, from the
+# ADM #1667 T2 panel) — `\.pem([^[:alnum:]]|$)` and `credentials([^[:alnum:]]|$)` — closing
+# the same unbounded-substring defect the `.env` fix closed. The bound un-blocks the
+# alnum-follows class (`credentialsProvider.ts`, `credentialsStore.ts`) while still blocking
+# the common real-secret forms: `server.pem`, `certs/x.pem`, `server.pem.bak`,
+# `credentials.json`, `google-credentials.json`, `.credentials`, bare `credentials`.
+# TRADEOFF (cc#416 panel, GPT-F3): the bound is character-based, not semantic — it ALSO
+# un-blocks a `credentials<alnum>` name that COULD be a real secret (`credentialsProduction.json`).
+# That is an accepted false-NEGATIVE traded for the false-block fix; the guard is best-effort,
+# .gitignore is the real control. NOTE (kimi-F4): a token-plus-DOT name (`crypto.pem.test.ts`,
+# `foo.credentials.test.ts`) STAYS blocked — structurally identical to `credentials.json`, so no
+# BOUNDED PATTERN can un-block it without un-blocking a real secret. A suffix-strip (like the
+# template strip below) COULD un-block it; we chose not to add one (renaming a test file is
+# cheaper than the added strip complexity/risk).
+if echo "$COMMAND" | grep -qiE 'git add.*((^|[/[:space:]])secrets-|\.env(rc|s)?([^[:alnum:]]|$)|copilot_homelab|\.pem([^[:alnum:]]|$)|credentials([^[:alnum:]]|$))'; then
+  # Strip EXACT template basename tokens (.env.example/.env.sample/.env.template), bounded on
+  # BOTH sides — leading (^|space|/) and trailing (space|quote|EOL) — looping so ADJACENT
+  # templates both strip without leading-boundary consumption. Only a complete basename token
+  # is removed, never the substring inside a longer name (cc#416 panel F1/F2): `.env.example.bak`,
+  # `.env.sample.secret`, `prod.env.example`, `foo.env.template`, `.env.exampleSecret` all STAY
+  # blocked. `printf '%s'` (not echo) avoids -n/-e/backslash mangling of the command text (kimi-F6b).
+  # Detection greps are case-INSENSITIVE (-qiE, kimi-F1): macOS/BSD ship a case-insensitive
+  # filesystem by default, so `git add KEY.PEM`/`Credentials.json` must block. The strip stays
+  # case-SENSITIVE so an uppercase `.env.SAMPLE` is NOT stripped → stays blocked (safe direction).
+  STRIPPED="$COMMAND"
+  while :; do
+    NEW=$(printf '%s' "$STRIPPED" | sed -E "s#(^|[[:space:]/])\.env\.(example|sample|template)([[:space:]\"']|\$)#\1\3#")
+    [ "$NEW" = "$STRIPPED" ] && break
+    STRIPPED="$NEW"
+  done
+  if printf '%s' "$STRIPPED" | grep -qiE 'git add.*((^|[/[:space:]])secrets-|\.env(rc|s)?([^[:alnum:]]|$)|copilot_homelab|\.pem([^[:alnum:]]|$)|credentials([^[:alnum:]]|$))'; then
+    # Best-effort tripwire — .gitignore is the real control. Template basenames pass THIS
+    # hook; whether they actually stage depends on the repo's .gitignore (commonly only
+    # `.env.example` is un-ignored via `!.env.example`, so `.env.sample`/`.env.template`
+    # may still be ignored by git even though this hook permits them). cc#416 finding #3.
+    echo "Blocked: refusing to stage a likely secret file (secrets-*, .env*, .pem, credentials). Best-effort tripwire — .gitignore is the real control. Template basenames (.env.example/.sample/.template) pass this hook, but git may still ignore them per your .gitignore (typically only .env.example is un-ignored)." >&2
     exit 2
   fi
 fi
