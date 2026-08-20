@@ -20,7 +20,7 @@ jobs:
         distribution: 'temurin'
         java-version: 17
     - name: Generate and submit dependency graph
-      uses: gradle/actions/dependency-submission@v6
+      uses: gradle/actions/dependency-submission@v6.2.0
       with:
         # Scope the submitted graph to the SHIPPED runtime classpath only.
         # This fork distributes the DEBUG APK (both debug_build.yml and
