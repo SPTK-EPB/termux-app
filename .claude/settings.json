@@ -18,7 +18,7 @@
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/pre-commit-gate.sh"
+            "command": "bash $HOME/.claude/hooks/pre-commit-gate.sh"
           }
         ]
       },
